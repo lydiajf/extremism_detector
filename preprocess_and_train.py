@@ -10,14 +10,20 @@ import wandb
 
 from datasets import load_dataset
 
-# doesnt like -1 as padding token , have to set padding token to another number 
+# doesnt like -1 as padding token , have to set padding token to another number, will get error in embedding layer as doesnt like neg numbers 
 tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+
+if tokenizer.pad_token is None:
+    # Add a new padding token
+    tokenizer.add_special_tokens({'pad_token': '<PAD>'})
 
 ds = load_dataset("Sp1786/multiclass-sentiment-analysis-dataset", cache_dir="./data")['train']
 
-PAD_TOKEN = "<PAD>"
-PAD_INDEX = 0
+PAD_TOKEN = tokenizer.pad_token
+PAD_INDEX = tokenizer.pad_token_id
 MAX_LENGTH = 219
+
+print(PAD_INDEX)
 
 # preprocess and pad, use special token for padding so can mask 
 def preprocess(ds, max_records=None):
@@ -118,6 +124,7 @@ if __name__ == '__main__':
     "num_encoder_layers": num_encoder_layers,
     })
     
+    # think about ignoring padding in my loss
     # Define loss and optimizer
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)

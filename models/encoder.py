@@ -36,7 +36,7 @@ class Encoder(torch.nn.Module):
         similarity_matrix = torch.matmul(query, key.transpose(-2, -1)) / scaling_factor
 
         # putting in zero for mask as pad token is 0 (dont need to write mask as pad token = 0)
-        similarity_matrix = similarity_matrix.masked_fill(0, -1e10)
+        similarity_matrix = similarity_matrix.masked_fill(50257, -1e10)
 
         # Apply softmax to get attention weights
         soft_matrix = torch.softmax(similarity_matrix, dim=-1)
