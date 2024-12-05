@@ -75,9 +75,9 @@ if __name__ == '__main__':
     # Parameters
     
     save_dir = 'preprocessed_data'
-    batch_size = 1
+    batch_size = 2
     learning_rate = 1e-4
-    epochs = 1
+    epochs = 2
     num_classes = 10  # Number of classes
     emb_dim = 256  # Embedding dimension
     num_heads = 2
@@ -89,7 +89,7 @@ if __name__ == '__main__':
 
 
     # Load the preprocessed data
-    input_ids, attention_masks, labels = preprocess(ds, max_records=3)
+    input_ids, attention_masks, labels = preprocess(ds, max_records=8)
     
     # Prepare data for DataLoader
     class SentimentDataset(torch.utils.data.Dataset):
@@ -184,22 +184,36 @@ if __name__ == '__main__':
     with torch.no_grad():  # Disable gradient calculation for evaluation
         texts = ds['text'] 
         labels = ds['label']
-        tensor_texts = []
-        tensor_labels = []
-
+        correct_predictions = 0
+        total_samples = 0
+        all_preds = []
+        all_labels = []
 
         for text, label in zip(texts, labels):
-            text = text.unsqueeze(0)  # Add batch dimension if necessary
-            output = model(text)  # Forward pass
-            all_preds = []
-            all_labels = []
+            # Tokenize the text
+            encoded_inputs = tokenizer(
+                text,
+                add_special_tokens=True,
+                max_length=MAX_LENGTH,
+                padding='max_length',
+                truncation=True,
+                return_tensors='pt'
+            )
 
-            # Assuming you have a way to get predicted class from output
-            predicted = torch.argmax(output, dim=1)
-            correct_predictions += (predicted == label).sum().item()
-            total_samples += label.size(0)
+            text_tensor = encoded_inputs['input_ids'].to(device)  # Add batch dimension
+            attention_mask = encoded_inputs['attention_mask'].to(device)
 
-        accuracy = correct_predictions / total_samples
+            # Forward pass
+            output = model(text_tensor, attention_mask)  # Shape: [1, num_classes]
+
+            # Get predicted class
+            predicted = torch.argmax(output, dim=1)  # Shape: [1]
+            correct_predictions += (predicted.item() == label)  # Compare with the true label
+            total_samples += 1
+
+            all_preds.append(predicted.item())
+            all_labels.append(label)
+            accuracy = correct_predictions / total_samples
         print(f"Validation Accuracy: {accuracy:.4f}")
 
         # Log validation loss and accuracy to wandb
