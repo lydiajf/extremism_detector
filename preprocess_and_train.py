@@ -24,56 +24,64 @@ PAD_INDEX = tokenizer.pad_token_id
 MAX_LENGTH = 219
 
 print(PAD_INDEX)
+from sklearn.preprocessing import LabelEncoder
 
 # preprocess and pad, use special token for padding so can mask 
-def preprocess(ds, max_records=None):
+def preprocess(ds, max_records):
     texts = ds['text'] 
     labels = ds['label']
 
-    tensor_texts = []
+    # Create an instance of LabelEncoder
+    label_encoder = LabelEncoder()
+
+    # Fit the encoder and transform the labels
+    labels = label_encoder.fit_transform(labels)
+
+    input_ids_list = []
+    attention_masks_list = []
     tensor_labels = []
 
+
     # converting zip into iterable
-    for i,(text, label) in enumerate(zip(texts, labels)):
+    for i, (text, label) in enumerate(zip(texts, labels)):
         if max_records is not None and i >= max_records:
             break
 
-        if len(text) <= MAX_LENGTH:
-            encoded_inputs = tokenizer(
-            texts,
+        # Tokenize the text
+        encoded_inputs = tokenizer(
+            text,
             add_special_tokens=True,
             max_length=MAX_LENGTH,
             padding='max_length',
             truncation=True,
-            return_tensors='pt' 
-            )
+            return_tensors='pt'
+        )
 
-
-        # if len(text) <= MAX_LENGTH:
-        #     tokenized_text = torch.tensor(encoded_inputs) 
-        
-        # # Pad the text to MAX_LENGTH
-        # if len(tokenized_text) < MAX_LENGTH:
-        #     padding = torch.full((MAX_LENGTH - len(tokenized_text),), PAD_INDEX)
-        #     tokenized_text = torch.cat((tokenized_text, padding)) 
-        
-        tensor_texts.append(encoded_inputs)
+        # Append the input_ids and attention_mask tensors
+        input_ids_list.append(encoded_inputs['input_ids'])
+        attention_masks_list.append(encoded_inputs['attention_mask'])
         tensor_labels.append(label)
 
-    return torch.stack(tensor_texts), torch.tensor(tensor_labels)
+    # Concatenate the lists of tensors
+    input_ids = torch.cat(input_ids_list, dim=0)
+
+    attention_masks = torch.cat(attention_masks_list, dim=0)
+    labels = torch.tensor(labels[:len(input_ids)], dtype=torch.long)
+
+    return input_ids, attention_masks, labels
     
 
 if __name__ == '__main__':
     # Parameters
     
     save_dir = 'preprocessed_data'
-    batch_size = 32
+    batch_size = 1
     learning_rate = 1e-4
     epochs = 1
     num_classes = 10  # Number of classes
     emb_dim = 256  # Embedding dimension
     num_heads = 2
-    hidden_dim_ff = 128
+    voc_size = 50258
     num_encoder_layers = 6  # Number of encoder layers
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -81,12 +89,13 @@ if __name__ == '__main__':
 
 
     # Load the preprocessed data
-    texts, labels = preprocess(ds, max_records=3)
+    input_ids, attention_masks, labels = preprocess(ds, max_records=3)
     
     # Prepare data for DataLoader
-    class AudioDataset(torch.utils.data.Dataset):
-        def __init__(self, texts, labels):
+    class SentimentDataset(torch.utils.data.Dataset):
+        def __init__(self, texts, attention_masks, labels):
             self.texts = texts
+            self.attention_masks = attention_masks
             self.labels = labels
         
         def __len__(self):
@@ -94,34 +103,32 @@ if __name__ == '__main__':
         
         def __getitem__(self, idx):
             text = self.texts[idx]
+            attention_mask = self.attention_masks[idx]
             label = self.labels[idx]
-            # Adjust mel shape if necessary
-            # Current shape: [80, time_steps]
-            # For Conv1d, we need shape: [channels, time_steps]
-            return text, label
-    
+            return text, attention_mask, label
+        
     # Create Dataset and DataLoader
-    dataset = AudioDataset(texts, labels)
+    dataset = SentimentDataset(input_ids, attention_masks, labels)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
     
     # Initialize the model
     model = Encoder(
         emb_dim=emb_dim,
         num_heads=num_heads,
-        hidden_dim_ff=hidden_dim_ff,
-        num_encoder_layers=num_encoder_layers,
-        num_classes=num_classes
+        vocab_size = voc_size,
+        hidden_dim_ff= 64
+        # num_encoder_layers=num_encoder_layers,
+        # num_classes=num_classes
     ).to(device)
 
     wandb.init(project='semantic_model', config={
     "learning_rate": learning_rate,
     "epochs": epochs,
     "batch_size": batch_size,
-    "num_classes": num_classes,
+    # "num_classes": num_classes,
     "emb_dim": emb_dim,
     "num_heads": num_heads,
-    "hidden_dim_ff": hidden_dim_ff,
-    "num_encoder_layers": num_encoder_layers,
+    # "num_encoder_layers": num_encoder_layers,
     })
     
     # think about ignoring padding in my loss
@@ -136,12 +143,15 @@ if __name__ == '__main__':
         correct_predictions = 0
         total_samples = 0
 
-        for texts, labels in tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}"):
+        for texts, attention_masks, labels in tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}"):
             texts = texts.to(device)
+            attention_masks = attention_masks.to(device)
             labels = labels.to(device)
+
+            print(texts)
             
             # Adjust mel shape for Conv1d: [batch_size, channels, time_steps]
-            texts = texts.squeeze(1)  # Remove singleton dimension if present
+            # texts = texts.squeeze(1)  # Remove singleton dimension if present
             # mel = mel.permute(0, 2, 1)  # From [batch_size, n_mels, time_steps] to [batch_size, time_steps, n_mels]
             # mel = mel.transpose(1, 2)  # Now [batch_size, n_mels, time_steps]
             
@@ -150,7 +160,7 @@ if __name__ == '__main__':
             # outputs = model(mel)
 
             # Forward pass
-            class_logits = model(texts)
+            class_logits = model(texts, attention_masks)
 
             loss = criterion(class_logits, labels)
             loss.backward()
