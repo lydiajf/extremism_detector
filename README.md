@@ -1,0 +1,1 @@
+Creating an extremism detector using two models trained for semantic detection and misinformation detection and getting probabiltites from both, concatonating, passing through a function where highly polarising plus likely false indicates extreme content.
